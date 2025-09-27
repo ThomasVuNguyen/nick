@@ -17,6 +17,8 @@ Edit `config.json` to set your parameters:
 - `dataset_name`: Dataset to use (e.g., "ThomasTheMaker/cadquery")
 - `num_training_rows`: Number of training examples
 - `num_validation_rows`: Number of validation examples
+- `save_steps`: How often to save checkpoints (e.g., 500)
+- `save_total_limit`: Maximum checkpoints to keep (e.g., 3)
 - `learning_rate`, `batch_size`, etc.
 
 3. **Train the model:**

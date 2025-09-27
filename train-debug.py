@@ -133,7 +133,9 @@ training_args = TrainingArguments(
     logging_steps=5,
     eval_steps=config['eval_steps'],
     eval_strategy="steps",
-    save_strategy="no",
+    save_strategy="steps",
+    save_steps=config['save_steps'],
+    save_total_limit=config['save_total_limit'],
     bf16=True,
     output_dir=output_dir,
     hub_model_id=repo_id,
@@ -237,8 +239,19 @@ This will create a standalone merged model that doesn't require PEFT.
 - `adapter_config.json` - LoRA adapter configuration
 - `adapter_model.safetensors` - LoRA adapter weights
 - `config.json` - Complete training configuration used
+- `checkpoint-{step}/` - Training checkpoints (saved every {config['save_steps']} steps)
 - `training_metrics_{NUM_TRAINING_ROWS}.csv` - Training metrics
 - `training_validation_loss_{NUM_TRAINING_ROWS}.png` - Loss curves
+
+## Checkpoints
+
+Training checkpoints are saved every {config['save_steps']} steps, with a maximum of {config['save_total_limit']} checkpoints kept. You can resume training from any checkpoint:
+
+```python
+from transformers import Trainer
+trainer = Trainer.from_pretrained("./checkpoint-{step}")
+trainer.train(resume_from_checkpoint=True)
+```
 
 ## Performance
 
