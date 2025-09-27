@@ -93,15 +93,19 @@ def collate_fn(examples):
         image = example["images"][0]
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        text = example["texts"][0]
+        
+        # Extract from the texts field which contains a list of dictionaries
+        text_data = example["texts"][0]  # Get first text entry
+        user_prompt = text_data["user"]  # Extract the user prompt
+        assistant_response = text_data["assistant"]  # Extract the CADQuery code
+        
         messages = [
             {"role": "user", "content": [
-                {"type": "text", "text": "Answer briefly."},
                 {"type": "image"},
-                {"type": "text", "text": text}
+                {"type": "text", "text": user_prompt}
             ]},
             {"role": "assistant", "content": [
-                {"type": "text", "text": text}
+                {"type": "text", "text": assistant_response}
             ]}
         ]
         text_prompt = processor.apply_chat_template(messages, add_generation_prompt=False)

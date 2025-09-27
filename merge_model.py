@@ -79,6 +79,9 @@ def merge_lora_model():
     merged_model.save_pretrained(output_path, safe_serialization=True)
     processor.save_pretrained(output_path)
     
+    # Define merged_repo_id for README generation
+    merged_repo_id = f"ThomasTheMaker/{model_name}-{dataset_short}-{num_training_rows}-merged"
+    
     # Generate README for merged model
     readme_content = f"""# {model_name}-{dataset_short}-{num_training_rows}-merged
 
@@ -185,7 +188,6 @@ The original LoRA adapter is available at: `ThomasTheMaker/{model_name}-{dataset
     # Upload to Hugging Face Hub
     print("\nUploading merged model to Hugging Face Hub...")
     try:
-        merged_repo_id = f"ThomasTheMaker/{model_name}-{dataset_short}-{num_training_rows}-merged"
         merged_model.push_to_hub(merged_repo_id)
         processor.push_to_hub(merged_repo_id)
         

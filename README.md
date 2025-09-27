@@ -23,7 +23,7 @@ Edit `config.json` to set your parameters:
 
 3. **Train the model:**
 ```bash
-python train-debug.py
+python train.py
 ```
 
 **🔄 Automatic Resume**: The script automatically detects and resumes from the latest checkpoint if training was interrupted.

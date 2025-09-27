@@ -1,12 +1,12 @@
 {
   "base_model": "HuggingFaceTB/SmolVLM-256M-Base",
   "dataset_name": "ThomasTheMaker/cadquery",
-  "num_training_rows": 20000,
-  "num_validation_rows": 1000,
+  "num_training_rows": 1000,
+  "num_validation_rows": 100,
   "num_epochs": 3,
   "learning_rate": 2e-4,
-  "batch_size": 3,
-  "eval_batch_size": 4,
+  "batch_size": 2,
+  "eval_batch_size": 2,
   "gradient_accumulation_steps": 2,
   "warmup_steps": 50,
   "eval_steps": 100,
@@ -14,6 +14,6 @@
   "save_total_limit": 3,
   "max_new_tokens": 500,
   "use_qlora": true,
-  "test_image": "https://cdn.britannica.com/61/93061-050-99147DCE/Statue-of-Liberty-Island-New-York-Bay.jpg",
-  "test_prompt": "Can you describe the image?"
+  "test_image": "https://datasets-server.huggingface.co/assets/ThomasTheMaker/cadquery/--/046629ca699e87927bedc178714a0289e94dbb2d/--/default/train/1/images/image-1d100e9.jpg?Expires=1759010361&Signature=KxYgY-YDzJYiVcbd3zNFAon5p26S90iIYcaZugx4eozXxcuU1spPNpDV2feH6xgkUYtIXB7ibPL~pRRNenOpW9U4pS2frVks56f9dTQELDdDmtQU4JPA46Urt9b65o2D72BSb-oe6u-1eNvAGvJORW-kp3DIpkncM1S-PVjc0d9ckIhffj7aHmittdEQ~VLQb9XGjk5ZmxxTrxCEV~-f6RpeG03ujIEXcvmRPnkakissSmR3JVLnuFlw-CvFoGw5bFn33AAFvZxo1rj1LpP-WEHqvOWb99Af2ISqDlzH5eplZF3cOPLDRpU64X2bJ5fR7yziRp3SGHn6Cl2QXj550g__&Key-Pair-Id=K3EI6M078Z3AC3",
+  "test_prompt": "Generate the CADQuery code needed to create the CAD for the provided image. Just the code, no other words."
 }
