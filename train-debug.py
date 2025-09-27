@@ -15,7 +15,8 @@ from huggingface_hub import HfApi
 USE_LORA = False
 USE_QLORA = True
 SMOL = True
-NUM_TRAINING_ROWS = 2000  # Change this to 100, 1000, 10000, etc.
+NUM_TRAINING_ROWS = 10  # Change this to 100, 1000, 10000, etc.
+NUM_VALIDATION_ROWS = 10  # Number of rows for validation (picked right after training rows)
 
 model_id = "HuggingFaceTB/SmolVLM-Base" if SMOL else "HuggingFaceM4/Idefics3-8B-Llama3"
 
@@ -46,7 +47,8 @@ if USE_QLORA or USE_LORA:
         model_id,
         quantization_config=bnb_config if USE_QLORA else None,
         _attn_implementation="flash_attention_2",
-        device_map="auto"
+        device_map="auto",
+        dtype=torch.bfloat16,  # Fixed deprecated torch_dtype
     )
     model.add_adapter(lora_config)
     model.enable_adapters()
@@ -65,11 +67,15 @@ else:
 # -------------------------------
 # 3. Load CADQuery dataset
 # -------------------------------
-print(f"Loading ThomasTheMaker/cadquery dataset ({NUM_TRAINING_ROWS} rows)...")
+print(f"Loading ThomasTheMaker/cadquery dataset ({NUM_TRAINING_ROWS} training + {NUM_VALIDATION_ROWS} validation rows)...")
 dataset = load_dataset("ThomasTheMaker/cadquery")
 
+# Split dataset: training rows 0 to NUM_TRAINING_ROWS-1, validation rows NUM_TRAINING_ROWS to NUM_TRAINING_ROWS+NUM_VALIDATION_ROWS-1
 train_ds = dataset["train"].select(range(NUM_TRAINING_ROWS))
-print(train_ds)
+val_ds = dataset["train"].select(range(NUM_TRAINING_ROWS, NUM_TRAINING_ROWS + NUM_VALIDATION_ROWS))
+
+print(f"Training dataset: {len(train_ds)} rows")
+print(f"Validation dataset: {len(val_ds)} rows")
 
 # -------------------------------
 # 4. Collate function
@@ -114,32 +120,85 @@ repo_id = f"ThomasTheMaker/{model_name}-cadquery-debug{NUM_TRAINING_ROWS}"
 
 training_args = TrainingArguments(
     num_train_epochs=3,
-    per_device_train_batch_size=1,
-    gradient_accumulation_steps=1,
-    warmup_steps=0,
-    learning_rate=1e-4,
-    logging_steps=1,
+    per_device_train_batch_size=2,  # Conservative increase from 1 to 2
+    per_device_eval_batch_size=4,   # Conservative increase from 1 to 4
+    gradient_accumulation_steps=2,  # Keep at 2 (effective batch size = 2*2 = 4)
+    warmup_steps=50,                # Added warmup for better convergence
+    learning_rate=2e-4,             # Slightly increased learning rate
+    logging_steps=5,                # Reduced logging frequency
+    eval_steps=5,                   # Evaluate every 5 steps (more frequent for small datasets)
+    eval_strategy="steps",
     save_strategy="no",
     bf16=True,
     output_dir=output_dir,
     hub_model_id=repo_id,
     remove_unused_columns=False,
-    gradient_checkpointing=True,
+    gradient_checkpointing=True,    # Re-enabled for memory efficiency
+    load_best_model_at_end=False,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    dataloader_num_workers=2,       # Reduced workers to save memory
+    dataloader_pin_memory=True,     # Faster data transfer to GPU
+    max_grad_norm=1.0,              # Gradient clipping for stability
 )
 
 model.config.use_cache = False
+
+# Additional memory optimizations
+if hasattr(model, 'gradient_checkpointing_enable'):
+    model.gradient_checkpointing_enable()
+
+# Optimize memory usage
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True  # Optimize for consistent input sizes
+
+# Clear cache before training
+torch.cuda.empty_cache()
+
+# Set memory fraction to be more conservative
+torch.cuda.set_per_process_memory_fraction(0.9)  # Use 90% of available VRAM
 
 trainer = Trainer(
     model=model,
     args=training_args,
     data_collator=collate_fn,
     train_dataset=train_ds,
+    eval_dataset=val_ds,
 )
 
 trainer.train()
 
-# Push model to your Hugging Face Hub
-trainer.push_to_hub()
+# Save and push model
+if USE_QLORA or USE_LORA:
+    print("Saving adapter model...")
+    # Save the adapter model
+    model.save_pretrained(output_dir)
+    processor.save_pretrained(output_dir)
+    print(f"Adapter model saved to {output_dir}")
+    
+    # Push adapter model to hub
+    model.push_to_hub(repo_id)
+    processor.push_to_hub(repo_id)
+    print(f"Adapter model pushed to {repo_id}")
+    
+    print("\n" + "="*70)
+    print("ADAPTER MODEL SAVED SUCCESSFULLY!")
+    print("📁 Adapter model (requires PEFT):")
+    print(f"   Local: {output_dir}")
+    print(f"   Hub: {repo_id}")
+    print("\n🔄 To create a full merged model, run:")
+    print("python merge_model.py")
+    print("\n🚀 Or use the adapter model with PEFT:")
+    print("from peft import PeftModel")
+    print("base_model = Idefics3ForConditionalGeneration.from_pretrained('HuggingFaceTB/SmolVLM-Base')")
+    print(f"model = PeftModel.from_pretrained(base_model, '{output_dir}')")
+    print("="*70)
+else:
+    # For non-LoRA models, save and push normally
+    model.save_pretrained(output_dir)
+    processor.save_pretrained(output_dir)
+    trainer.push_to_hub()
 
 # -------------------------------
 # 6. Automatic export of logs to CSV + PNG, then upload to Hub
@@ -175,16 +234,25 @@ if os.path.exists(log_root):
             df.to_csv(csv_path, index=False)
             print("CSV saved at", csv_path)
 
-            loss_df = df[df["tag"].str.contains("loss")]
-            if not loss_df.empty:
-                plt.figure(figsize=(10,6))
-                plt.plot(loss_df["step"], loss_df["value"], label="Loss")
+            # Separate training and validation loss
+            train_loss_df = df[df["tag"].str.contains("train/loss")]
+            eval_loss_df = df[df["tag"].str.contains("eval/loss")]
+            
+            if not train_loss_df.empty or not eval_loss_df.empty:
+                plt.figure(figsize=(12, 6))
+                
+                if not train_loss_df.empty:
+                    plt.plot(train_loss_df["step"], train_loss_df["value"], label="Training Loss", color="blue")
+                
+                if not eval_loss_df.empty:
+                    plt.plot(eval_loss_df["step"], eval_loss_df["value"], label="Validation Loss", color="red")
+                
                 plt.xlabel("Step")
                 plt.ylabel("Loss")
-                plt.title(f"Training Loss Curve (debug{NUM_TRAINING_ROWS})")
+                plt.title(f"Training and Validation Loss Curves (debug{NUM_TRAINING_ROWS})")
                 plt.legend()
                 plt.grid(True)
-                png_path = os.path.join(output_dir, f"training_loss_debug{NUM_TRAINING_ROWS}.png")
+                png_path = os.path.join(output_dir, f"training_validation_loss_debug{NUM_TRAINING_ROWS}.png")
                 plt.savefig(png_path)
                 plt.close()
                 print("Plot saved at", png_path)
@@ -199,7 +267,7 @@ if os.path.exists(log_root):
                 )
                 api.upload_file(
                     path_or_fileobj=png_path,
-                    path_in_repo=f"training_loss_debug{NUM_TRAINING_ROWS}.png",
+                    path_in_repo=f"training_validation_loss_debug{NUM_TRAINING_ROWS}.png",
                     repo_id=repo_id,
                     repo_type="model"
                 )
