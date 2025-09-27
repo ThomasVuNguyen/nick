@@ -15,6 +15,7 @@ from huggingface_hub import HfApi
 USE_LORA = False
 USE_QLORA = True
 SMOL = True
+NUM_TRAINING_ROWS = 2000  # Change this to 100, 1000, 10000, etc.
 
 model_id = "HuggingFaceTB/SmolVLM-Base" if SMOL else "HuggingFaceM4/Idefics3-8B-Llama3"
 
@@ -62,12 +63,12 @@ else:
         param.requires_grad = False
 
 # -------------------------------
-# 3. Load CADQuery dataset (10 rows only)
+# 3. Load CADQuery dataset
 # -------------------------------
-print("Loading ThomasTheMaker/cadquery dataset (10 rows)...")
+print(f"Loading ThomasTheMaker/cadquery dataset ({NUM_TRAINING_ROWS} rows)...")
 dataset = load_dataset("ThomasTheMaker/cadquery")
 
-train_ds = dataset["train"].select(range(100))
+train_ds = dataset["train"].select(range(NUM_TRAINING_ROWS))
 print(train_ds)
 
 # -------------------------------
@@ -105,11 +106,11 @@ def collate_fn(examples):
     return batch
 
 # -------------------------------
-# 5. Training (10 rows)
+# 5. Training
 # -------------------------------
 model_name = model_id.split("/")[-1]
-output_dir = f"./{model_name}-cadquery-debug100"
-repo_id = f"ThomasTheMaker/{model_name}-cadquery-debug100"
+output_dir = f"./{model_name}-cadquery-debug{NUM_TRAINING_ROWS}"
+repo_id = f"ThomasTheMaker/{model_name}-cadquery-debug{NUM_TRAINING_ROWS}"
 
 training_args = TrainingArguments(
     num_train_epochs=3,
@@ -137,7 +138,7 @@ trainer = Trainer(
 
 trainer.train()
 
-# Push 10-row model to your Hugging Face Hub
+# Push model to your Hugging Face Hub
 trainer.push_to_hub()
 
 # -------------------------------
@@ -170,7 +171,7 @@ if os.path.exists(log_root):
 
         if scalars:
             df = pd.DataFrame(scalars)
-            csv_path = os.path.join(output_dir, "training_metrics_debug10.csv")
+            csv_path = os.path.join(output_dir, f"training_metrics_debug{NUM_TRAINING_ROWS}.csv")
             df.to_csv(csv_path, index=False)
             print("CSV saved at", csv_path)
 
@@ -180,10 +181,10 @@ if os.path.exists(log_root):
                 plt.plot(loss_df["step"], loss_df["value"], label="Loss")
                 plt.xlabel("Step")
                 plt.ylabel("Loss")
-                plt.title("Training Loss Curve (debug10)")
+                plt.title(f"Training Loss Curve (debug{NUM_TRAINING_ROWS})")
                 plt.legend()
                 plt.grid(True)
-                png_path = os.path.join(output_dir, "training_loss_debug10.png")
+                png_path = os.path.join(output_dir, f"training_loss_debug{NUM_TRAINING_ROWS}.png")
                 plt.savefig(png_path)
                 plt.close()
                 print("Plot saved at", png_path)
@@ -192,13 +193,13 @@ if os.path.exists(log_root):
                 api = HfApi()
                 api.upload_file(
                     path_or_fileobj=csv_path,
-                    path_in_repo="training_metrics_debug10.csv",
+                    path_in_repo=f"training_metrics_debug{NUM_TRAINING_ROWS}.csv",
                     repo_id=repo_id,
                     repo_type="model"
                 )
                 api.upload_file(
                     path_or_fileobj=png_path,
-                    path_in_repo="training_loss_debug10.png",
+                    path_in_repo=f"training_loss_debug{NUM_TRAINING_ROWS}.png",
                     repo_id=repo_id,
                     repo_type="model"
                 )
