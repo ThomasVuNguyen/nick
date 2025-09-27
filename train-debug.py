@@ -11,7 +11,7 @@ from tensorboard.backend.event_processing import event_accumulator
 from huggingface_hub import HfApi
 
 # -------------------------------
-# 1. Load Configuration
+# 1. Load Configuration6
 # -------------------------------
 with open('config.json', 'r') as f:
     config = json.load(f)
@@ -164,7 +164,23 @@ torch.backends.cudnn.benchmark = True  # Optimize for consistent input sizes
 torch.cuda.empty_cache()
 
 # Set memory fraction to be more conservative
-torch.cuda.set_per_process_memory_fraction(0.9)  # Use 90% of available VRAM
+torch.cuda.set_per_process_memory_fraction(0.85)  # Use 85% of available VRAM (more conservative)
+
+# Add memory management callback
+from transformers import TrainerCallback
+
+class MemoryCallback(TrainerCallback):
+    def __init__(self):
+        self.step_count = 0
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        self.step_count += 1
+        # Clear cache every 50 steps to prevent memory accumulation
+        if self.step_count % 50 == 0:
+            torch.cuda.empty_cache()
+            print(f"🧹 Cleared VRAM cache at step {self.step_count}")
+
+memory_callback = MemoryCallback()
 
 trainer = Trainer(
     model=model,
@@ -172,9 +188,25 @@ trainer = Trainer(
     data_collator=collate_fn,
     train_dataset=train_ds,
     eval_dataset=val_ds,
+    callbacks=[memory_callback],
 )
 
-trainer.train()
+# Check for existing checkpoints and resume if found
+import glob
+checkpoint_dirs = glob.glob(os.path.join(output_dir, "checkpoint-*"))
+if checkpoint_dirs:
+    # Sort by step number to get the latest checkpoint
+    latest_checkpoint = max(checkpoint_dirs, key=lambda x: int(x.split("-")[-1]))
+    print(f"🔄 Found existing checkpoint: {latest_checkpoint}")
+    print("📈 Resuming training from checkpoint...")
+    trainer.train(resume_from_checkpoint=latest_checkpoint)
+else:
+    print("🚀 Starting fresh training...")
+    trainer.train()
+
+# Clear memory after training
+torch.cuda.empty_cache()
+print("🧹 Final VRAM cleanup completed")
 
 # Save and push model
 if USE_QLORA or USE_LORA:
