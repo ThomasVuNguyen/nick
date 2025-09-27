@@ -4,21 +4,25 @@ from transformers import AutoProcessor, BitsAndBytesConfig, Idefics3ForCondition
 from datasets import load_dataset
 from transformers import TrainingArguments, Trainer
 import os
+import json
 import pandas as pd
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
 from huggingface_hub import HfApi
 
 # -------------------------------
-# 1. Settings
+# 1. Load Configuration
 # -------------------------------
-USE_LORA = False
-USE_QLORA = True
-SMOL = True
-NUM_TRAINING_ROWS = 10  # Change this to 100, 1000, 10000, etc.
-NUM_VALIDATION_ROWS = 10  # Number of rows for validation (picked right after training rows)
+with open('config.json', 'r') as f:
+    config = json.load(f)
 
-model_id = "HuggingFaceTB/SmolVLM-Base" if SMOL else "HuggingFaceM4/Idefics3-8B-Llama3"
+# Simple configuration
+model_id = config['base_model']
+dataset_name = config['dataset_name']
+NUM_TRAINING_ROWS = config['num_training_rows']
+NUM_VALIDATION_ROWS = config['num_validation_rows']
+USE_QLORA = config['use_qlora']
+USE_LORA = False
 
 # -------------------------------
 # 2. Processor and Model
@@ -48,7 +52,7 @@ if USE_QLORA or USE_LORA:
         quantization_config=bnb_config if USE_QLORA else None,
         _attn_implementation="flash_attention_2",
         device_map="auto",
-        dtype=torch.bfloat16,  # Fixed deprecated torch_dtype
+        dtype=torch.bfloat16,
     )
     model.add_adapter(lora_config)
     model.enable_adapters()
@@ -67,8 +71,8 @@ else:
 # -------------------------------
 # 3. Load CADQuery dataset
 # -------------------------------
-print(f"Loading ThomasTheMaker/cadquery dataset ({NUM_TRAINING_ROWS} training + {NUM_VALIDATION_ROWS} validation rows)...")
-dataset = load_dataset("ThomasTheMaker/cadquery")
+print(f"Loading {dataset_name} dataset ({NUM_TRAINING_ROWS} training + {NUM_VALIDATION_ROWS} validation rows)...")
+dataset = load_dataset(dataset_name)
 
 # Split dataset: training rows 0 to NUM_TRAINING_ROWS-1, validation rows NUM_TRAINING_ROWS to NUM_TRAINING_ROWS+NUM_VALIDATION_ROWS-1
 train_ds = dataset["train"].select(range(NUM_TRAINING_ROWS))
@@ -115,31 +119,32 @@ def collate_fn(examples):
 # 5. Training
 # -------------------------------
 model_name = model_id.split("/")[-1]
-output_dir = f"./{model_name}-cadquery-debug{NUM_TRAINING_ROWS}"
-repo_id = f"ThomasTheMaker/{model_name}-cadquery-debug{NUM_TRAINING_ROWS}"
+dataset_short = dataset_name.split("/")[-1]  # Get just the dataset name
+output_dir = f"./{model_name}-{dataset_short}-{NUM_TRAINING_ROWS}"
+repo_id = f"ThomasTheMaker/{model_name}-{dataset_short}-{NUM_TRAINING_ROWS}"
 
 training_args = TrainingArguments(
-    num_train_epochs=3,
-    per_device_train_batch_size=2,  # Conservative increase from 1 to 2
-    per_device_eval_batch_size=4,   # Conservative increase from 1 to 4
-    gradient_accumulation_steps=2,  # Keep at 2 (effective batch size = 2*2 = 4)
-    warmup_steps=50,                # Added warmup for better convergence
-    learning_rate=2e-4,             # Slightly increased learning rate
-    logging_steps=5,                # Reduced logging frequency
-    eval_steps=5,                   # Evaluate every 5 steps (more frequent for small datasets)
+    num_train_epochs=config['num_epochs'],
+    per_device_train_batch_size=config['batch_size'],
+    per_device_eval_batch_size=config['eval_batch_size'],
+    gradient_accumulation_steps=config['gradient_accumulation_steps'],
+    warmup_steps=config['warmup_steps'],
+    learning_rate=config['learning_rate'],
+    logging_steps=5,
+    eval_steps=config['eval_steps'],
     eval_strategy="steps",
     save_strategy="no",
     bf16=True,
     output_dir=output_dir,
     hub_model_id=repo_id,
     remove_unused_columns=False,
-    gradient_checkpointing=True,    # Re-enabled for memory efficiency
+    gradient_checkpointing=True,
     load_best_model_at_end=False,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    dataloader_num_workers=2,       # Reduced workers to save memory
-    dataloader_pin_memory=True,     # Faster data transfer to GPU
-    max_grad_norm=1.0,              # Gradient clipping for stability
+    dataloader_num_workers=2,
+    dataloader_pin_memory=True,
+    max_grad_norm=1.0,
 )
 
 model.config.use_cache = False
@@ -182,6 +187,87 @@ if USE_QLORA or USE_LORA:
     processor.push_to_hub(repo_id)
     print(f"Adapter model pushed to {repo_id}")
     
+    # Generate README for adapter model
+    readme_content = f"""# {model_name}-{dataset_short}-{NUM_TRAINING_ROWS}
+
+This is a LoRA adapter model fine-tuned on the {dataset_name} dataset.
+
+## Model Details
+
+- **Base Model**: {model_id}
+- **Dataset**: {dataset_name}
+- **Training Rows**: {NUM_TRAINING_ROWS}
+- **Validation Rows**: {NUM_VALIDATION_ROWS}
+- **Fine-tuning Method**: {'QLoRA' if USE_QLORA else 'LoRA'}
+
+## Training Configuration
+
+The model was trained with the following configuration from `config.json`:
+
+```json
+{json.dumps(config, indent=2)}
+```
+
+## Usage
+
+### Option 1: Use with PEFT (Recommended for development)
+
+```python
+from transformers import AutoProcessor, Idefics3ForConditionalGeneration
+from peft import PeftModel
+
+# Load base model
+base_model = Idefics3ForConditionalGeneration.from_pretrained("{model_id}")
+processor = AutoProcessor.from_pretrained("{model_id}")
+
+# Load adapter
+model = PeftModel.from_pretrained(base_model, "{repo_id}")
+```
+
+### Option 2: Create merged model
+
+```bash
+python merge_model.py
+```
+
+This will create a standalone merged model that doesn't require PEFT.
+
+## Files
+
+- `adapter_config.json` - LoRA adapter configuration
+- `adapter_model.safetensors` - LoRA adapter weights
+- `config.json` - Complete training configuration used
+- `training_metrics_{NUM_TRAINING_ROWS}.csv` - Training metrics
+- `training_validation_loss_{NUM_TRAINING_ROWS}.png` - Loss curves
+
+## Performance
+
+Check the training metrics CSV and loss curves PNG for detailed performance information.
+"""
+
+    # Save README
+    readme_path = os.path.join(output_dir, "README.md")
+    with open(readme_path, 'w') as f:
+        f.write(readme_content)
+    
+    # Save config.json for reference
+    config_path = os.path.join(output_dir, "config.json")
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    # Upload README to Hub
+    try:
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=readme_path,
+            path_in_repo="README.md",
+            repo_id=repo_id,
+            repo_type="model"
+        )
+        print("✅ README uploaded to Hugging Face Hub")
+    except Exception as e:
+        print(f"❌ Failed to upload README: {e}")
+
     print("\n" + "="*70)
     print("ADAPTER MODEL SAVED SUCCESSFULLY!")
     print("📁 Adapter model (requires PEFT):")

@@ -1,0 +1,17 @@
+{
+  "base_model": "HuggingFaceTB/SmolVLM-256M-Base",
+  "dataset_name": "ThomasTheMaker/cadquery",
+  "num_training_rows": 20000,
+  "num_validation_rows": 1000,
+  "num_epochs": 3,
+  "learning_rate": 2e-4,
+  "batch_size": 3,
+  "eval_batch_size": 4,
+  "gradient_accumulation_steps": 2,
+  "warmup_steps": 50,
+  "eval_steps": 100,
+  "max_new_tokens": 500,
+  "use_qlora": true,
+  "test_image": "https://cdn.britannica.com/61/93061-050-99147DCE/Statue-of-Liberty-Island-New-York-Bay.jpg",
+  "test_prompt": "Can you describe the image?"
+}
